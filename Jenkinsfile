@@ -57,10 +57,32 @@ pipeline {
 
     post {
         success {
-            echo 'Deployment successful! App running at http://<your-ec2-ip>:1700'
+            emailext(
+                to: '2200030300cseh@gmail.com',
+                subject: " BUILD SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """
+                    <h2>Build Successful!</h2>
+                    <p><b>Job:</b> ${env.JOB_NAME}</p>
+                    <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                    <p><b>Status:</b> SUCCESS</p>
+                    <p><a href="${env.BUILD_URL}">View Build</a></p>
+                """,
+                mimeType: 'text/html'
+            )
         }
         failure {
-            echo 'Pipeline failed. Check the logs above.'
+            emailext(
+                to: 'srivis2005@gmail.com',
+                subject: "❌ BUILD FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """
+                    <h2>Build Failed!</h2>
+                    <p><b>Job:</b> ${env.JOB_NAME}</p>
+                    <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                    <p><b>Status:</b> FAILED</p>
+                    <p><a href="${env.BUILD_URL}">View Build Logs</a></p>
+                """,
+                mimeType: 'text/html'
+            )
         }
     }
 }
