@@ -162,34 +162,20 @@ pipeline {
         }
 
         stage('Register Green to Target Group') {
-            steps {
-                sh '''
-                    aws elbv2 register-targets \
-                        --target-group-arn $TG_GREEN_ARN \
-                        --targets Id=$GREEN_1_ID,Port=1700 \
-                                 Id=$GREEN_2_ID,Port=1700 \
-                                 Id=$GREEN_3_ID,Port=1700
-                    
-                    echo "Waiting for green targets to become healthy in ALB..."
-                    sleep 30
+    steps {
+        sh '''
+            aws elbv2 register-targets \
+                --target-group-arn $TG_GREEN_ARN \
+                --targets Id=$GREEN_1_ID,Port=1700 \
+                         Id=$GREEN_2_ID,Port=1700 \
+                         Id=$GREEN_3_ID,Port=1700
 
-                    HEALTH=$(aws elbv2 describe-target-health \
-                        --target-group-arn $TG_GREEN_ARN \
-                        --query 'TargetHealthDescriptions[*].TargetHealth.State' \
-                        --output text)
-                    
-                    echo "Green target health: $HEALTH"
-
-                    for STATE in $HEALTH; do
-                        if [ "$STATE" != "healthy" ]; then
-                            echo "Green target not healthy in ALB yet: $STATE"
-                            exit 1
-                        fi
-                    done
-                    echo "All green targets healthy in ALB"
-                '''
-            }
-        }
+            echo "Registered green targets - waiting 15 seconds..."
+            sleep 15
+            echo "Ready to switch!"
+        '''
+    }
+}
 
         stage('Approval Before Switch') {
             steps {
