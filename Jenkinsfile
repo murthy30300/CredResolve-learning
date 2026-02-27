@@ -118,14 +118,14 @@ pipeline {
                 sh '''
                     JAR_PATH=$(find PROJECT3/sbdemo3/target -name "*.jar" | head -1)
 
-                    scp -i /home/ubuntu/jenkins.pem -o StrictHostKeyChecking=no \
-                        $JAR_PATH ubuntu@${GREEN_1}:/home/ubuntu/app.jar
+                    scp -i /var/jenkins_home/jenkins.pem -o StrictHostKeyChecking=no \
+                    $JAR_PATH ubuntu@${GREEN_1}:/home/ubuntu/app.jar
 
-                    scp -i /home/ubuntu/jenkins.pem -o StrictHostKeyChecking=no \
-                        $JAR_PATH ubuntu@${GREEN_2}:/home/ubuntu/app.jar
+                    scp -i /var/jenkins_home/jenkins.pem -o StrictHostKeyChecking=no \
+                    $JAR_PATH ubuntu@${GREEN_2}:/home/ubuntu/app.jar
 
-                    scp -i /home/ubuntu/jenkins.pem -o StrictHostKeyChecking=no \
-                        $JAR_PATH ubuntu@${GREEN_3}:/home/ubuntu/app.jar
+                    scp -i /var/jenkins_home/jenkins.pem -o StrictHostKeyChecking=no \
+                    $JAR_PATH ubuntu@${GREEN_3}:/home/ubuntu/app.jar
                 '''
             }
         }
@@ -134,7 +134,7 @@ pipeline {
             steps {
                 sh '''
                     for HOST in $GREEN_1 $GREEN_2 $GREEN_3; do
-                        ssh -i /home/ubuntu/jenkins.pem -o StrictHostKeyChecking=no ubuntu@$HOST "
+                        ssh -i /var/jenkins_home/jenkins.pem -o StrictHostKeyChecking=no ubuntu@$HOST "
                             sudo systemctl stop springapp || true
                             sudo systemctl start springapp
                         "
