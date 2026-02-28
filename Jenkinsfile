@@ -167,12 +167,22 @@ pipeline {
                     sleep 20
 
                     for HOST in $GREEN_1 $GREEN_2 $GREEN_3; do
-                        STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$HOST:1700/actuator/health)
+                        RETRIES=5
+                        COUNT=0
+                        until [ $COUNT -ge $RETRIES ]; do
+                            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$HOST:1700/actuator/health)
+                            if [ "$STATUS" = "200" ]; then
+                                echo "$HOST is healthy"
+                                break
+                            fi
+                            COUNT=$((COUNT+1))
+                            echo "Attempt $COUNT failed on $HOST (HTTP $STATUS) - retrying in 15s..."
+                            sleep 15
+                        done
                         if [ "$STATUS" != "200" ]; then
-                            echo "Health check FAILED on $HOST (got HTTP $STATUS)"
+                            echo "Health check FAILED on $HOST after $RETRIES attempts"
                             exit 1
                         fi
-                        echo "$HOST is healthy"
                     done
                 '''
             }
