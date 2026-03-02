@@ -14,7 +14,6 @@ pipeline {
         TG_BLUE_ARN  = "arn:aws:elasticloadbalancing:us-east-1:975894387333:targetgroup/tg-blue/303e7203f0c0993d"
         TG_GREEN_ARN = "arn:aws:elasticloadbalancing:us-east-1:975894387333:targetgroup/tg-green/280adc1bd29826c0"
 
-        // Blue instance details
         BLUE_1_IP = "172.31.76.47"
         BLUE_2_IP = "172.31.69.120"
         BLUE_3_IP = "172.31.72.132"
@@ -22,7 +21,6 @@ pipeline {
         BLUE_2_ID = "i-08bfd35be387dcbb2"
         BLUE_3_ID = "i-0b62d83a8c08ee7b5"
 
-        // Green instance details
         GREEN_1_IP = "172.31.74.33"
         GREEN_2_IP = "172.31.73.107"
         GREEN_3_IP = "172.31.74.43"
@@ -40,7 +38,6 @@ pipeline {
 
     stages {
 
-        // ─── DETECT ACTIVE ENVIRONMENT ───────────────
 
         stage('Detect Active Environment') {
             steps {
@@ -87,7 +84,6 @@ pipeline {
             }
         }
 
-        // ─── BUILD STAGES ────────────────────────────
 
         stage('Clone Repo') {
             steps {
@@ -172,7 +168,6 @@ pipeline {
             }
         }
 
-        // ─── START IDLE INSTANCES ─────────────────────
 
         stage('Start Idle Instances') {
             steps {
@@ -191,7 +186,6 @@ pipeline {
             }
         }
 
-        // ─── DEPLOY TO IDLE ENVIRONMENT ──────────────
 
         stage('Copy JAR to Idle Instances') {
             steps {
@@ -212,13 +206,34 @@ pipeline {
             steps {
                 sh '''
                     . /tmp/bg_state
-                    for HOST in $DEPLOY_1_IP $DEPLOY_2_IP $DEPLOY_3_IP; do
-                        ssh -i $PEM -o StrictHostKeyChecking=no ubuntu@$HOST "
-                            sudo systemctl stop springapp || true
-                            sudo systemctl start springapp
+
+                    if [ "$IDLE_ENV" = "blue" ]; then
+                        echo "Deploying to Blue-1 via Docker..."
+                        ssh -i $PEM -o StrictHostKeyChecking=no ubuntu@${DEPLOY_1_IP} "
+                            docker stop $CONTAINER_NAME || true
+                            docker rm $CONTAINER_NAME || true
+                            docker run -d -p 1700:8080 --name $CONTAINER_NAME $IMAGE_NAME
                         "
-                        echo "Deployed to $HOST"
-                    done
+                        echo "Deployed to Blue-1 (Docker)"
+
+                        echo "Deploying to Blue-2 and Blue-3 via systemd..."
+                        for HOST in $DEPLOY_2_IP $DEPLOY_3_IP; do
+                            ssh -i $PEM -o StrictHostKeyChecking=no ubuntu@$HOST "
+                                sudo systemctl stop springapp || true
+                                sudo systemctl start springapp
+                            "
+                            echo "Deployed to $HOST"
+                        done
+                    else
+                        echo "Deploying to all Green instances via systemd..."
+                        for HOST in $DEPLOY_1_IP $DEPLOY_2_IP $DEPLOY_3_IP; do
+                            ssh -i $PEM -o StrictHostKeyChecking=no ubuntu@$HOST "
+                                sudo systemctl stop springapp || true
+                                sudo systemctl start springapp
+                            "
+                            echo "Deployed to $HOST"
+                        done
+                    fi
                 '''
             }
         }
@@ -271,7 +286,6 @@ pipeline {
             }
         }
 
-        // ─── SWITCH TRAFFIC ───────────────────────────
 
         stage('Approval Before Switch') {
             steps {
@@ -328,7 +342,6 @@ pipeline {
             }
         }
 
-        // ─── UPDATE BLUE-1 CONTAINER (always) ────────
 
         stage('Update Blue-1 Container') {
             steps {
@@ -341,7 +354,6 @@ pipeline {
             }
         }
 
-        // ─── STOP OLD ACTIVE INSTANCES ────────────────
 
         stage('Stop Old Active Instances') {
             steps {
