@@ -9,4 +9,9 @@ public class DemoController {
     public int getDemo(){
         return 5;
     }
+    @GetMapping("/whoami")
+    public String whoami() {
+        return "Request served by: " + System.getenv("HOSTNAME") + 
+            " | Instance: " + InetAddress.getLocalHost().getHostName();
+    }
 }
