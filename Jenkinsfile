@@ -1,9 +1,7 @@
 pipeline {
     agent any
 
-    triggers {
-        githubPush()
-    }
+    
 
     environment {
         IMAGE_NAME     = "sbdemo3"
