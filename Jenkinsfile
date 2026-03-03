@@ -1,8 +1,6 @@
 pipeline {
     agent any
 
-    
-
     environment {
         IMAGE_NAME     = "sbdemo3"
         CONTAINER_NAME = "sbdemo3-container"
@@ -35,8 +33,6 @@ pipeline {
     }
 
     stages {
-
-
         stage('Detect Active Environment') {
             steps {
                 sh '''
@@ -81,8 +77,6 @@ pipeline {
                 '''
             }
         }
-
-
         stage('Clone Repo') {
             steps {
                 git branch: 'main',
@@ -165,13 +159,11 @@ pipeline {
                 }
             }
         }
-
-
         stage('Start Idle Instances') {
             steps {
                 sh '''
                     . /tmp/bg_state
-                    echo "Deploying to: $IDLE_ENV instances"
+                    echo "Starting $IDLE_ENV instances for canary..."
                     aws ec2 start-instances --instance-ids $DEPLOY_1_ID $DEPLOY_2_ID $DEPLOY_3_ID
 
                     echo "Waiting for instances to be running..."
@@ -183,8 +175,6 @@ pipeline {
                 '''
             }
         }
-
-
         stage('Copy JAR to Idle Instances') {
             steps {
                 sh '''
@@ -262,7 +252,7 @@ pipeline {
                             exit 1
                         fi
                     done
-                    echo "All $IDLE_ENV instances healthy!"
+                    echo "All $IDLE_ENV instances healthy - ready for canary!"
                 '''
             }
         }
@@ -279,21 +269,107 @@ pipeline {
 
                     echo "Registered $IDLE_ENV targets - waiting 15 seconds..."
                     sleep 15
-                    echo "Ready to switch!"
+                    echo "Ready for canary rollout!"
+                '''
+            }
+        }
+        stage('Canary 10% — Route 10% Traffic to Idle') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+                    echo "Canary Phase 1: 90% $ACTIVE_ENV | 10% $IDLE_ENV"
+
+                    aws elbv2 modify-listener \
+                        --listener-arn $LISTENER_ARN \
+                        --default-actions Type=forward,ForwardConfig="{
+                            TargetGroups=[
+                                {TargetGroupArn=$ACTIVE_TG,Weight=90},
+                                {TargetGroupArn=$IDLE_TG,Weight=10}
+                            ],
+                            TargetGroupStickinessConfig={Enabled=false}
+                        }"
+
+                    echo "10% traffic now going to $IDLE_ENV"
                 '''
             }
         }
 
-
-        stage('Approval Before Switch') {
+        stage('Monitor Canary 10%') {
             steps {
-                sh '. /tmp/bg_state && echo "Switching from $ACTIVE_ENV → $IDLE_ENV"'
-                input message: 'Idle environment is healthy. Switch ALB traffic now?',
-                      ok: 'Yes, Switch Now'
+                sh '''
+                    . /tmp/bg_state
+                    echo "Monitoring canary at 10% for 2 minutes..."
+                    sleep 120
+
+                    STATUS=$(curl -s -o /dev/null -w "%{http_code}" $ALB_URL/actuator/health)
+                    if [ "$STATUS" != "200" ]; then
+                        echo "Canary FAILED at 10% (HTTP $STATUS) - rolling back to 100% $ACTIVE_ENV!"
+                        aws elbv2 modify-listener \
+                            --listener-arn $LISTENER_ARN \
+                            --default-actions Type=forward,TargetGroupArn=$ACTIVE_TG
+                        exit 1
+                    fi
+                    echo "Canary 10% is healthy - proceeding!"
+                '''
             }
         }
 
-        stage('Switch ALB') {
+        stage('Approval — Increase to 50%') {
+            steps {
+                sh '. /tmp/bg_state && echo "10% canary on $IDLE_ENV passed. Approve to increase to 50%?"'
+                input message: '10% canary looks good. Increase traffic to 50%?',
+                      ok: 'Yes, increase to 50%'
+            }
+        }
+        stage('Canary 50% — Route 50% Traffic to Idle') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+                    echo "Canary Phase 2: 50% $ACTIVE_ENV | 50% $IDLE_ENV"
+
+                    aws elbv2 modify-listener \
+                        --listener-arn $LISTENER_ARN \
+                        --default-actions Type=forward,ForwardConfig="{
+                            TargetGroups=[
+                                {TargetGroupArn=$ACTIVE_TG,Weight=50},
+                                {TargetGroupArn=$IDLE_TG,Weight=50}
+                            ],
+                            TargetGroupStickinessConfig={Enabled=false}
+                        }"
+
+                    echo "50% traffic now going to $IDLE_ENV"
+                '''
+            }
+        }
+
+        stage('Monitor Canary 50%') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+                    echo "Monitoring canary at 50% for 2 minutes..."
+                    sleep 120
+
+                    STATUS=$(curl -s -o /dev/null -w "%{http_code}" $ALB_URL/actuator/health)
+                    if [ "$STATUS" != "200" ]; then
+                        echo "Canary FAILED at 50% (HTTP $STATUS) - rolling back to 100% $ACTIVE_ENV!"
+                        aws elbv2 modify-listener \
+                            --listener-arn $LISTENER_ARN \
+                            --default-actions Type=forward,TargetGroupArn=$ACTIVE_TG
+                        exit 1
+                    fi
+                    echo "Canary 50% is healthy - ready for full cutover!"
+                '''
+            }
+        }
+
+        stage('Approval — Full Cutover to 100%') {
+            steps {
+                sh '. /tmp/bg_state && echo "50% canary on $IDLE_ENV passed. Approve full cutover?"'
+                input message: '50% canary looks good. Switch 100% traffic to idle environment?',
+                      ok: 'Yes, Full Cutover!'
+            }
+        }
+        stage('Full Cutover — 100% to Idle') {
             steps {
                 sh '''
                     . /tmp/bg_state
@@ -301,7 +377,7 @@ pipeline {
                         --listener-arn $LISTENER_ARN \
                         --default-actions Type=forward,TargetGroupArn=$IDLE_TG
 
-                    echo "ALB now pointing to $IDLE_ENV"
+                    echo "100% traffic now on $IDLE_ENV"
                 '''
             }
         }
@@ -322,7 +398,7 @@ pipeline {
                         exit 1
                     fi
 
-                    echo "Smoke test passed - $IDLE_ENV is now live!"
+                    echo "Smoke test passed - $IDLE_ENV is fully live!"
                 '''
             }
         }
@@ -339,8 +415,6 @@ pipeline {
                 '''
             }
         }
-
-
         stage('Update Blue-1 Container') {
             steps {
                 sh '''
@@ -351,15 +425,13 @@ pipeline {
                 '''
             }
         }
-
-
         stage('Stop Old Active Instances') {
             steps {
                 sh '''
                     . /tmp/bg_state
                     echo "Stopping old $ACTIVE_ENV instances (now idle)..."
                     aws ec2 stop-instances --instance-ids $STOP_1_ID $STOP_2_ID
-                    echo "Stopped $STOP_1_ID and $STOP_2_ID. Deployment complete!"
+                    echo "Stopped $STOP_1_ID and $STOP_2_ID. Canary deployment complete!"
                 '''
             }
         }
@@ -369,11 +441,12 @@ pipeline {
         success {
             emailext(
                 to: "${NOTIFY_EMAIL}",
-                subject: "B/G DEPLOY SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                subject: "CANARY DEPLOY SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
                 body: """
-                    <h2 style="color:green;">Blue/Green Deployment Successful!</h2>
+                    <h2 style="color:green;">Canary Deployment Successful!</h2>
                     <p><b>Job:</b> ${env.JOB_NAME}</p>
                     <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                    <p><b>Canary Phases:</b> 10% → 50% → 100% all passed</p>
                     <p><b>App URL:</b> http://alb-spring-app-857952563.us-east-1.elb.amazonaws.com</p>
                     <p><a href="${env.BUILD_URL}">View Build</a></p>
                 """,
@@ -383,12 +456,12 @@ pipeline {
         failure {
             emailext(
                 to: "${NOTIFY_EMAIL}",
-                subject: "B/G DEPLOY FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                subject: "CANARY DEPLOY FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
                 body: """
-                    <h2 style="color:red;">Deployment Failed!</h2>
+                    <h2 style="color:red;">Canary Deployment Failed!</h2>
                     <p><b>Job:</b> ${env.JOB_NAME}</p>
                     <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
-                    <p><b>Note:</b> If ALB was switched, auto-rollback was attempted.</p>
+                    <p><b>Note:</b> Auto-rollback to previous active environment was attempted.</p>
                     <p><a href="${env.BUILD_URL}console">View Console Logs</a></p>
                 """,
                 mimeType: 'text/html'
