@@ -1,0 +1,28 @@
+# ─────────────────────────────────────────────
+# FILL THIS FILE — rename to terraform.tfvars
+# ─────────────────────────────────────────────
+
+aws_region = "ap-south-1"
+
+# VPC CIDRs — do NOT overlap with GCP (10.1.0.0/16)
+vpc_cidr                = "172.31.0.0/16"
+private_subnet_cidr     = "172.31.2.0/24"
+private_subnet_cidr_az2 = "172.31.3.0/24"
+public_subnet_cidr      = "172.31.1.0/24"
+
+# GCP VPN public IP — get this AFTER running GCP Cloud VPN setup
+# gcloud compute vpn-gateways describe <your-vpn-gateway> --region=asia-south1
+gcp_vpn_public_ip = "0.0.0.0"   # <-- REPLACE THIS
+
+# GCP CIDR — your GCP VPC range
+gcp_vpc_cidr = "10.1.0.0/16"
+
+# RDS master password
+db_password = "ChangeMe@1234"   # <-- CHANGE THIS
+
+# S3 bucket names — must be globally unique across all AWS accounts
+# Add a suffix like your account ID or name to ensure uniqueness
+analytics_bucket_name      = "credresolve-analytics-data-vishnu"
+athena_results_bucket_name = "credresolve-athena-results-vishnu"
+
+project_name = "credresolve"

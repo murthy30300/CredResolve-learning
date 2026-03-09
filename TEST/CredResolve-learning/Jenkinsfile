@@ -1,0 +1,471 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME     = "sbdemo3"
+        CONTAINER_NAME = "sbdemo3-container"
+        NOTIFY_EMAIL   = "2200030300cseh@gmail.com"
+
+        LISTENER_ARN = "arn:aws:elasticloadbalancing:us-east-1:975894387333:listener/app/alb-spring-app/a03f2f010177033c/845688c248988e04"
+        TG_BLUE_ARN  = "arn:aws:elasticloadbalancing:us-east-1:975894387333:targetgroup/tg-blue/303e7203f0c0993d"
+        TG_GREEN_ARN = "arn:aws:elasticloadbalancing:us-east-1:975894387333:targetgroup/tg-green/280adc1bd29826c0"
+
+        BLUE_1_IP = "172.31.76.47"
+        BLUE_2_IP = "172.31.69.120"
+        BLUE_3_IP = "172.31.72.132"
+        BLUE_1_ID = "i-09d0c85c83afa1a47"
+        BLUE_2_ID = "i-08bfd35be387dcbb2"
+        BLUE_3_ID = "i-0b62d83a8c08ee7b5"
+
+        GREEN_1_IP = "172.31.74.33"
+        GREEN_2_IP = "172.31.73.107"
+        GREEN_3_IP = "172.31.74.43"
+        GREEN_1_ID = "i-0e2ef091231b286b4"
+        GREEN_2_ID = "i-02c6d2a003c039cf2"
+        GREEN_3_ID = "i-0c218a848720348a0"
+
+        PEM     = "/var/jenkins_home/jenkins.pem"
+        ALB_URL = "http://alb-spring-app-857952563.us-east-1.elb.amazonaws.com"
+    }
+
+    tools {
+        maven 'Maven3'
+    }
+
+    stages {
+        stage('Detect Active Environment') {
+            steps {
+                sh '''
+                    CURRENT_TG=$(aws elbv2 describe-listeners \
+                        --listener-arns $LISTENER_ARN \
+                        --query 'Listeners[0].DefaultActions[0].TargetGroupArn' \
+                        --output text)
+
+                    echo "Current active TG: $CURRENT_TG"
+
+                    if [ "$CURRENT_TG" = "$TG_BLUE_ARN" ]; then
+                        echo "ACTIVE_ENV=blue"          >  /tmp/bg_state
+                        echo "IDLE_ENV=green"           >> /tmp/bg_state
+                        echo "ACTIVE_TG=$TG_BLUE_ARN"  >> /tmp/bg_state
+                        echo "IDLE_TG=$TG_GREEN_ARN"   >> /tmp/bg_state
+                        echo "DEPLOY_1_IP=$GREEN_1_IP" >> /tmp/bg_state
+                        echo "DEPLOY_2_IP=$GREEN_2_IP" >> /tmp/bg_state
+                        echo "DEPLOY_3_IP=$GREEN_3_IP" >> /tmp/bg_state
+                        echo "DEPLOY_1_ID=$GREEN_1_ID" >> /tmp/bg_state
+                        echo "DEPLOY_2_ID=$GREEN_2_ID" >> /tmp/bg_state
+                        echo "DEPLOY_3_ID=$GREEN_3_ID" >> /tmp/bg_state
+                        echo "STOP_1_ID=$BLUE_2_ID"    >> /tmp/bg_state
+                        echo "STOP_2_ID=$BLUE_3_ID"    >> /tmp/bg_state
+                    else
+                        echo "ACTIVE_ENV=green"         >  /tmp/bg_state
+                        echo "IDLE_ENV=blue"            >> /tmp/bg_state
+                        echo "ACTIVE_TG=$TG_GREEN_ARN" >> /tmp/bg_state
+                        echo "IDLE_TG=$TG_BLUE_ARN"    >> /tmp/bg_state
+                        echo "DEPLOY_1_IP=$BLUE_1_IP"  >> /tmp/bg_state
+                        echo "DEPLOY_2_IP=$BLUE_2_IP"  >> /tmp/bg_state
+                        echo "DEPLOY_3_IP=$BLUE_3_IP"  >> /tmp/bg_state
+                        echo "DEPLOY_1_ID=$BLUE_1_ID"  >> /tmp/bg_state
+                        echo "DEPLOY_2_ID=$BLUE_2_ID"  >> /tmp/bg_state
+                        echo "DEPLOY_3_ID=$BLUE_3_ID"  >> /tmp/bg_state
+                        echo "STOP_1_ID=$GREEN_1_ID"   >> /tmp/bg_state
+                        echo "STOP_2_ID=$GREEN_2_ID"   >> /tmp/bg_state
+                    fi
+
+                    echo "======= Deployment Plan ======="
+                    cat /tmp/bg_state
+                    echo "================================"
+                '''
+            }
+        }
+        stage('Clone Repo') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/murthy30300/CredResolve-learning.git'
+            }
+        }
+
+        stage('Build JAR') {
+            steps {
+                dir('PROJECT3/sbdemo3') {
+                    sh 'mvn clean package -DskipTests'
+                }
+            }
+        }
+
+        stage('Unit Tests') {
+            steps {
+                dir('PROJECT3/sbdemo3') {
+                    sh 'mvn test -Dgroups=!UAT'
+                }
+            }
+            post {
+                always {
+                    dir('PROJECT3/sbdemo3') {
+                        junit '**/target/surefire-reports/*.xml'
+                    }
+                }
+                failure {
+                    emailext(
+                        to: "${NOTIFY_EMAIL}",
+                        subject: "UNIT TESTS FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                        body: """
+                            <h2 style="color:red;">Unit Tests Failed!</h2>
+                            <p><b>Job:</b> ${env.JOB_NAME}</p>
+                            <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                            <p><a href="${env.BUILD_URL}testReport/">View Test Report</a></p>
+                            <p><a href="${env.BUILD_URL}console">View Console Logs</a></p>
+                        """,
+                        mimeType: 'text/html',
+                        attachmentsPattern: '**/surefire-reports/*.txt'
+                    )
+                }
+            }
+        }
+
+        stage('UAT Tests') {
+            steps {
+                dir('PROJECT3/sbdemo3') {
+                    sh 'mvn test -Dgroups=UAT'
+                }
+            }
+            post {
+                always {
+                    dir('PROJECT3/sbdemo3') {
+                        junit '**/target/surefire-reports/*.xml'
+                    }
+                }
+                failure {
+                    emailext(
+                        to: "${NOTIFY_EMAIL}",
+                        subject: "UAT TESTS FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                        body: """
+                            <h2 style="color:red;">UAT Tests Failed!</h2>
+                            <p><b>Job:</b> ${env.JOB_NAME}</p>
+                            <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                            <p><a href="${env.BUILD_URL}testReport/">View Test Report</a></p>
+                            <p><a href="${env.BUILD_URL}console">View Console Logs</a></p>
+                        """,
+                        mimeType: 'text/html',
+                        attachmentsPattern: '**/surefire-reports/*.txt'
+                    )
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                dir('PROJECT3/sbdemo3') {
+                    sh 'docker build -t $IMAGE_NAME .'
+                }
+            }
+        }
+        stage('Start Idle Instances') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+                    echo "Starting $IDLE_ENV instances for canary..."
+                    aws ec2 start-instances --instance-ids $DEPLOY_1_ID $DEPLOY_2_ID $DEPLOY_3_ID
+
+                    echo "Waiting for instances to be running..."
+                    aws ec2 wait instance-running --instance-ids $DEPLOY_1_ID $DEPLOY_2_ID $DEPLOY_3_ID
+
+                    echo "Waiting 60s for OS to fully boot..."
+                    sleep 60
+                    echo "$IDLE_ENV instances are up!"
+                '''
+            }
+        }
+        stage('Copy JAR to Idle Instances') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+                    JAR_PATH=$(find PROJECT3/sbdemo3/target -name "*.jar" | head -1)
+
+                    scp -i $PEM -o StrictHostKeyChecking=no $JAR_PATH ubuntu@${DEPLOY_1_IP}:/home/ubuntu/app.jar
+                    scp -i $PEM -o StrictHostKeyChecking=no $JAR_PATH ubuntu@${DEPLOY_2_IP}:/home/ubuntu/app.jar
+                    scp -i $PEM -o StrictHostKeyChecking=no $JAR_PATH ubuntu@${DEPLOY_3_IP}:/home/ubuntu/app.jar
+
+                    echo "JAR copied to all $IDLE_ENV instances"
+                '''
+            }
+        }
+
+        stage('Deploy to Idle Instances') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+
+                    if [ "$IDLE_ENV" = "blue" ]; then
+                        echo "Deploying to Blue-1 via Docker..."
+                        ssh -i $PEM -o StrictHostKeyChecking=no ubuntu@${DEPLOY_1_IP} "
+                            docker stop $CONTAINER_NAME || true
+                            docker rm $CONTAINER_NAME || true
+                            docker run -d -p 1700:8080 --name $CONTAINER_NAME $IMAGE_NAME
+                        "
+                        echo "Deployed to Blue-1 (Docker)"
+
+                        echo "Deploying to Blue-2 and Blue-3 via systemd..."
+                        for HOST in $DEPLOY_2_IP $DEPLOY_3_IP; do
+                            ssh -i $PEM -o StrictHostKeyChecking=no ubuntu@$HOST "
+                                sudo systemctl stop springapp || true
+                                sudo systemctl start springapp
+                            "
+                            echo "Deployed to $HOST"
+                        done
+                    else
+                        echo "Deploying to all Green instances via systemd..."
+                        for HOST in $DEPLOY_1_IP $DEPLOY_2_IP $DEPLOY_3_IP; do
+                            ssh -i $PEM -o StrictHostKeyChecking=no ubuntu@$HOST "
+                                sudo systemctl stop springapp || true
+                                sudo systemctl start springapp
+                            "
+                            echo "Deployed to $HOST"
+                        done
+                    fi
+                '''
+            }
+        }
+
+        stage('Health Check Idle Instances') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+                    echo "Waiting for $IDLE_ENV instances to warm up..."
+                    sleep 20
+
+                    for HOST in $DEPLOY_1_IP $DEPLOY_2_IP $DEPLOY_3_IP; do
+                        RETRIES=5
+                        COUNT=0
+                        STATUS=000
+                        until [ $COUNT -ge $RETRIES ]; do
+                            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$HOST:1700/actuator/health)
+                            if [ "$STATUS" = "200" ]; then
+                                echo "$HOST is healthy"
+                                break
+                            fi
+                            COUNT=$((COUNT+1))
+                            echo "Attempt $COUNT failed on $HOST (HTTP $STATUS) - retrying in 15s..."
+                            sleep 15
+                        done
+                        if [ "$STATUS" != "200" ]; then
+                            echo "Health check FAILED on $HOST after $RETRIES attempts"
+                            exit 1
+                        fi
+                    done
+                    echo "All $IDLE_ENV instances healthy - ready for canary!"
+                '''
+            }
+        }
+
+        stage('Register Idle Instances to Target Group') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+                    aws elbv2 register-targets \
+                        --target-group-arn $IDLE_TG \
+                        --targets Id=$DEPLOY_1_ID,Port=1700 \
+                                 Id=$DEPLOY_2_ID,Port=1700 \
+                                 Id=$DEPLOY_3_ID,Port=1700
+
+                    echo "Registered $IDLE_ENV targets - waiting 15 seconds..."
+                    sleep 15
+                    echo "Ready for canary rollout!"
+                '''
+            }
+        }
+        stage('Canary 10% — Route 10% Traffic to Idle') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+                    echo "Canary Phase 1: 90% $ACTIVE_ENV | 10% $IDLE_ENV"
+
+                    aws elbv2 modify-listener \
+                        --listener-arn $LISTENER_ARN \
+                        --default-actions Type=forward,ForwardConfig="{
+                            TargetGroups=[
+                                {TargetGroupArn=$ACTIVE_TG,Weight=90},
+                                {TargetGroupArn=$IDLE_TG,Weight=10}
+                            ],
+                            TargetGroupStickinessConfig={Enabled=false}
+                        }"
+
+                    echo "10% traffic now going to $IDLE_ENV"
+                '''
+            }
+        }
+
+        stage('Monitor Canary 10%') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+                    echo "Monitoring canary at 10% for 2 minutes..."
+                    sleep 120
+
+                    STATUS=$(curl -s -o /dev/null -w "%{http_code}" $ALB_URL/actuator/health)
+                    if [ "$STATUS" != "200" ]; then
+                        echo "Canary FAILED at 10% (HTTP $STATUS) - rolling back to 100% $ACTIVE_ENV!"
+                        aws elbv2 modify-listener \
+                            --listener-arn $LISTENER_ARN \
+                            --default-actions Type=forward,TargetGroupArn=$ACTIVE_TG
+                        exit 1
+                    fi
+                    echo "Canary 10% is healthy - proceeding!"
+                '''
+            }
+        }
+
+        stage('Approval — Increase to 50%') {
+            steps {
+                sh '. /tmp/bg_state && echo "10% canary on $IDLE_ENV passed. Approve to increase to 50%?"'
+                input message: '10% canary looks good. Increase traffic to 50%?',
+                      ok: 'Yes, increase to 50%'
+            }
+        }
+        stage('Canary 50% — Route 50% Traffic to Idle') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+                    echo "Canary Phase 2: 50% $ACTIVE_ENV | 50% $IDLE_ENV"
+
+                    aws elbv2 modify-listener \
+                        --listener-arn $LISTENER_ARN \
+                        --default-actions Type=forward,ForwardConfig="{
+                            TargetGroups=[
+                                {TargetGroupArn=$ACTIVE_TG,Weight=50},
+                                {TargetGroupArn=$IDLE_TG,Weight=50}
+                            ],
+                            TargetGroupStickinessConfig={Enabled=false}
+                        }"
+
+                    echo "50% traffic now going to $IDLE_ENV"
+                '''
+            }
+        }
+
+        stage('Monitor Canary 50%') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+                    echo "Monitoring canary at 50% for 2 minutes..."
+                    sleep 120
+
+                    STATUS=$(curl -s -o /dev/null -w "%{http_code}" $ALB_URL/actuator/health)
+                    if [ "$STATUS" != "200" ]; then
+                        echo "Canary FAILED at 50% (HTTP $STATUS) - rolling back to 100% $ACTIVE_ENV!"
+                        aws elbv2 modify-listener \
+                            --listener-arn $LISTENER_ARN \
+                            --default-actions Type=forward,TargetGroupArn=$ACTIVE_TG
+                        exit 1
+                    fi
+                    echo "Canary 50% is healthy - ready for full cutover!"
+                '''
+            }
+        }
+
+        stage('Approval — Full Cutover to 100%') {
+            steps {
+                sh '. /tmp/bg_state && echo "50% canary on $IDLE_ENV passed. Approve full cutover?"'
+                input message: '50% canary looks good. Switch 100% traffic to idle environment?',
+                      ok: 'Yes, Full Cutover!'
+            }
+        }
+        stage('Full Cutover — 100% to Idle') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+                    aws elbv2 modify-listener \
+                        --listener-arn $LISTENER_ARN \
+                        --default-actions Type=forward,TargetGroupArn=$IDLE_TG
+
+                    echo "100% traffic now on $IDLE_ENV"
+                '''
+            }
+        }
+
+        stage('Smoke Test via ALB') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+                    sleep 10
+                    STATUS=$(curl -s -o /dev/null -w "%{http_code}" $ALB_URL/actuator/health)
+
+                    if [ "$STATUS" != "200" ]; then
+                        echo "Smoke test FAILED (HTTP $STATUS) - rolling back to $ACTIVE_ENV!"
+                        aws elbv2 modify-listener \
+                            --listener-arn $LISTENER_ARN \
+                            --default-actions Type=forward,TargetGroupArn=$ACTIVE_TG
+                        echo "Rolled back to $ACTIVE_ENV"
+                        exit 1
+                    fi
+
+                    echo "Smoke test passed - $IDLE_ENV is fully live!"
+                '''
+            }
+        }
+
+        stage('Deregister Old Active Instances') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+                    aws elbv2 deregister-targets \
+                        --target-group-arn $ACTIVE_TG \
+                        --targets Id=$DEPLOY_1_ID Id=$DEPLOY_2_ID Id=$DEPLOY_3_ID
+
+                    echo "$ACTIVE_ENV deregistered - $IDLE_ENV is now production"
+                '''
+            }
+        }
+        stage('Update Blue-1 Container') {
+            steps {
+                sh '''
+                    docker stop $CONTAINER_NAME || true
+                    docker rm $CONTAINER_NAME || true
+                    docker run -d -p 1700:8080 --name $CONTAINER_NAME $IMAGE_NAME
+                    echo "Blue-1 container updated"
+                '''
+            }
+        }
+        stage('Stop Old Active Instances') {
+            steps {
+                sh '''
+                    . /tmp/bg_state
+                    echo "Stopping old $ACTIVE_ENV instances (now idle)..."
+                    aws ec2 stop-instances --instance-ids $STOP_1_ID $STOP_2_ID
+                    echo "Stopped $STOP_1_ID and $STOP_2_ID. Canary deployment complete!"
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            emailext(
+                to: "${NOTIFY_EMAIL}",
+                subject: "CANARY DEPLOY SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """
+                    <h2 style="color:green;">Canary Deployment Successful!</h2>
+                    <p><b>Job:</b> ${env.JOB_NAME}</p>
+                    <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                    <p><b>Canary Phases:</b> 10% → 50% → 100% all passed</p>
+                    <p><b>App URL:</b> http://alb-spring-app-857952563.us-east-1.elb.amazonaws.com</p>
+                    <p><a href="${env.BUILD_URL}">View Build</a></p>
+                """,
+                mimeType: 'text/html'
+            )
+        }
+        failure {
+            emailext(
+                to: "${NOTIFY_EMAIL}",
+                subject: "CANARY DEPLOY FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """
+                    <h2 style="color:red;">Canary Deployment Failed!</h2>
+                    <p><b>Job:</b> ${env.JOB_NAME}</p>
+                    <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                    <p><b>Note:</b> Auto-rollback to previous active environment was attempted.</p>
+                    <p><a href="${env.BUILD_URL}console">View Console Logs</a></p>
+                """,
+                mimeType: 'text/html'
+            )
+        }
+    }
+}
