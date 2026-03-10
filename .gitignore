@@ -1,1 +1,2 @@
 .terraform/
+cloud-migration/gcp-infra/files/terraform-key.json
